@@ -3,7 +3,7 @@
 Real-time, multilingual (Hindi · English · Hinglish) speech-to-text service with a CRUD dashboard.
 
 - **Live:** https://kasinadhsarma-speech-to-text.hf.space
-- **Related docs:** [API reference](API.md) · [Database schema](DATABASE.md) · [Tech stack](TECH_STACK.md) · [Deployment](DEPLOYMENT.md) · [PDF (LaTeX)](latex/documentation.pdf)
+- **Related docs:** [API reference](API.md) · [Database schema](DATABASE.md) · [Code reference](CODE_REFERENCE.md) · [Tech stack](TECH_STACK.md) · [Deployment](DEPLOYMENT.md) · [PDF (LaTeX)](latex/documentation.pdf)
 
 ---
 

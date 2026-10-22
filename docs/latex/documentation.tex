@@ -16,7 +16,7 @@
 \usepackage{titlesec}
 \usepackage{listings}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds,calc}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,shapes.multipart,fit,backgrounds,calc}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{accent}{HTML}{2F6FDB}
@@ -402,6 +402,122 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 \bottomrule
 \end{tabularx}
 \end{table}
+
+%--------------------------------------------------------------------
+\section{Code Reference}
+Every module, attribute, class and function. The source docstrings match this section.
+
+\subsection{Class diagram}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\small, node distance=0.6cm and 2.6cm]
+  \tikzset{cls/.style={draw, rectangle split, rectangle split parts=2, align=left, fill=#1, inner sep=4pt, font=\footnotesize}}
+  \node[cls=boxdb] (base) {\textbf{Base}\\\textit{DeclarativeBase}\nodepart{second}metadata};
+  \node[cls=boxdb, below=of base] (tr) {\textbf{Transcription}\nodepart{second}id: int\\title: str\\text: str\\language: str\\duration\_sec: float\\created\_at: datetime\\updated\_at: datetime\\\rule{0pt}{2ex}to\_dict() $\to$ dict};
+  \node[cls=boxbe, right=of tr, yshift=1.2cm] (tin) {\textbf{TranscriptionIn}\\\textit{pydantic}\nodepart{second}title = "Untitled"\\text = ""\\language = "auto"\\duration\_sec = 0.0};
+  \node[cls=boxbe, right=of tr, yshift=-1.6cm] (tup) {\textbf{TranscriptionUpdate}\\\textit{pydantic}\nodepart{second}title: str | None\\text: str | None\\language: str | None};
+  \draw[-{Triangle[open,length=3mm]}, thick] (tr) -- (base);
+  \draw[arr, dashed] (tin.west) -- node[lbl, above]{creates} (tr.east |- tin.west);
+  \draw[arr, dashed] (tup.west) -- node[lbl, below]{updates} (tr.east |- tup.west);
+\end{tikzpicture}
+\caption{Data classes.}
+\end{figure}
+
+\subsection{\texttt{app/db.py}}
+\begin{longtable}{@{}p{4.6cm}p{10.6cm}@{}}
+\toprule
+\textbf{Name} & \textbf{Description}\\
+\midrule
+\endhead
+\texttt{DATABASE\_URL} & \texttt{\$DATABASE\_URL} or \texttt{sqlite:///./transcriptions.db}; stripped of whitespace/quotes, driver set to \texttt{postgresql+psycopg2}, \texttt{channel\_binding=require} removed\\
+\texttt{connect\_args} & \texttt{\{"check\_same\_thread": False\}} for SQLite, otherwise empty\\
+\texttt{engine} & \texttt{create\_engine(DATABASE\_URL, pool\_pre\_ping=True)}\\
+\texttt{SessionLocal} & \texttt{sessionmaker(bind=engine, expire\_on\_commit=False)}\\
+\texttt{utcnow()} & Returns \texttt{datetime.now(timezone.utc)}; timestamp default and \texttt{onupdate}\\
+\texttt{Base} & SQLAlchemy \texttt{DeclarativeBase}\\
+\texttt{Transcription} & ORM model for \texttt{transcriptions}; attributes in Section 3\\
+\texttt{to\_dict()} & Method of \texttt{Transcription}: JSON-ready dict; duration rounded to 0.01\,s, ISO 8601 timestamps\\
+\texttt{init\_db()} & \texttt{Base.metadata.create\_all(engine)}; idempotent\\
+\bottomrule
+\end{longtable}
+
+\subsection{\texttt{app/stt.py}}
+\begin{longtable}{@{}p{4.6cm}p{10.6cm}@{}}
+\toprule
+\textbf{Name} & \textbf{Description}\\
+\midrule
+\endhead
+\texttt{SAMPLE\_RATE} & 16000\\
+\texttt{MODEL\_SIZE} & \texttt{\$WHISPER\_MODEL}, default \texttt{small}\\
+\texttt{HINGLISH\_PROMPT} & \texttt{\$WHISPER\_PROMPT}, default Hinglish sentence; decoder \texttt{initial\_prompt}\\
+\texttt{\_model}, \texttt{\_lock} & Shared \texttt{WhisperModel} (lazy) and the lock guarding its creation\\
+\texttt{get\_model()} & Thread-safe lazy load: \texttt{WhisperModel(MODEL\_SIZE, device, compute\_type, cpu\_threads)} from \texttt{WHISPER\_DEVICE}/\texttt{COMPUTE}/\texttt{THREADS}. First call downloads weights.\\
+\texttt{transcribe()} & \texttt{transcribe(audio, language=None)}. \textbf{Args:} float32 mono 16\,kHz array in $[-1,1]$; language code or \texttt{auto}. \textbf{Returns} \texttt{(text, language)}. Skips audio under 0.3\,s. Decodes with \texttt{beam\_size=1}, \texttt{vad\_filter=True}, \texttt{condition\_on\_previous\_text=False}.\\
+\bottomrule
+\end{longtable}
+
+\subsection{\texttt{app/main.py}}
+\begin{longtable}{@{}p{4.6cm}p{10.6cm}@{}}
+\toprule
+\textbf{Name} & \textbf{Description}\\
+\midrule
+\endhead
+\texttt{STATIC} & Path of the \texttt{static/} directory\\
+\texttt{PARTIAL\_EVERY\_SEC} & 1.5 --- new audio between partial decodes\\
+\texttt{SILENCE\_SEC} & 0.8\,s trailing window checked for silence\\
+\texttt{SILENCE\_RMS} & 0.012 RMS threshold\\
+\texttt{MAX\_SEGMENT\_SEC} & 25.0 --- forces a final decode\\
+\texttt{app} & \texttt{FastAPI(title="Speech to Text", lifespan=lifespan)}\\
+\texttt{lifespan(\_)} & Startup: \texttt{init\_db()}; loads the model in a thread unless \texttt{PRELOAD\_MODEL=0}\\
+\texttt{get\_db()} & Dependency yielding a session, closed in \texttt{finally}\\
+\texttt{TranscriptionIn} & \texttt{title} (max 200, "Untitled"), \texttt{text} (""), \texttt{language} ("auto"), \texttt{duration\_sec} (0.0)\\
+\texttt{TranscriptionUpdate} & Optional \texttt{title} (max 200), \texttt{text}, \texttt{language}\\
+\texttt{health()} & \texttt{GET /api/health} $\to$ status, model, \texttt{engine.dialect.name}\\
+\texttt{list\_transcriptions()} & \texttt{GET}; params \texttt{q}, \texttt{limit}, \texttt{offset}; newest first; \texttt{ILIKE} on title/text; \texttt{limit} 1--200\\
+\texttt{create\_transcription()} & \texttt{POST}; body \texttt{TranscriptionIn}; \texttt{Transcription(**body.model\_dump())}; 201\\
+\texttt{\_get\_or\_404()} & Args \texttt{db}, \texttt{tid}: \texttt{db.get(...)} or \texttt{HTTPException(404)}\\
+\texttt{get\_transcription()} & \texttt{GET /\{tid\}}\\
+\texttt{update\_transcription()} & \texttt{PUT /\{tid\}}, body \texttt{TranscriptionUpdate}; sets only provided non-null fields\\
+\texttt{delete\_transcription()} & \texttt{DELETE /\{tid\}}; 204\\
+\texttt{ws\_transcribe()} & Args \texttt{ws}, \texttt{language}. WebSocket loop (Section 2.3). State: \texttt{segment}, \texttt{since\_decode}, \texttt{finals}, \texttt{langs}, \texttt{total\_samples}. Saves one row on stop.\\
+\quad\texttt{decode(final)} & Nested; transcribes \texttt{segment} in a thread, sends partial/final, clears the segment when final\\
+\texttt{index()} & \texttt{GET /} $\to$ \texttt{static/index.html}\\
+\bottomrule
+\end{longtable}
+
+\subsection{\texttt{hf\_entry.py}}
+\begin{longtable}{@{}p{4.6cm}p{10.6cm}@{}}
+\toprule
+\textbf{Name} & \textbf{Description}\\
+\midrule
+\endhead
+\texttt{\_quiet\_unraisable(u)} & Replaces \texttt{sys.unraisablehook}; ignores ``Invalid file descriptor'' errors from discarded event loops\\
+\texttt{gpu} & \texttt{spaces.GPU}, or a no-op decorator locally\\
+\texttt{\_placeholder(x)} & Identity function marked \texttt{@gpu} for ZeroGPU's startup check\\
+\texttt{demo} & Hidden \texttt{gr.Blocks} app\\
+\texttt{\_\_main\_\_} & \texttt{init\_db()}, warm model in a thread, \texttt{demo.launch(port 7860, ssr\_mode=False, app\_kwargs=\{"routes": stt\_app.routes\})}\\
+\bottomrule
+\end{longtable}
+
+\subsection{\texttt{static/app.js}}
+\begin{longtable}{@{}p{4.6cm}p{10.6cm}@{}}
+\toprule
+\textbf{Name} & \textbf{Description}\\
+\midrule
+\endhead
+\texttt{\$}, \texttt{api}, \texttt{esc(s)} & Selector shorthand, API base path, HTML escaping\\
+\texttt{editing}, \texttt{t} & Row being edited; search debounce timer\\
+\texttt{ws}, \texttt{ctx}, \texttt{stream}, \texttt{node} & WebSocket, 16\,kHz \texttt{AudioContext}, microphone stream, worklet node\\
+\texttt{recording}, \texttt{finals} & Capture flag; final segments this session\\
+\texttt{load()} & Fetches and renders the history (with search)\\
+\texttt{openDialog(row)} & Opens create/edit dialog\\
+\texttt{renderLive(partial)} & Final text plus grey partial text\\
+\texttt{start()} & Microphone $\to$ WebSocket $\to$ AudioWorklet streaming; handles \texttt{partial}/\texttt{final}/\texttt{saved}/\texttt{error}\\
+\texttt{stop()}, \texttt{cleanup()} & Send \texttt{stop}; release microphone and audio graph\\
+\texttt{PCM.process()} & Worklet: Float32 block $\to$ Int16, posted as a transferable buffer\\
+Event handlers & \texttt{\#new}, \texttt{\#cancel}, \texttt{\#form} submit (POST/PUT), \texttt{\#list} (edit/delete), \texttt{\#search} (250\,ms debounce), \texttt{\#rec} (start/stop)\\
+\bottomrule
+\end{longtable}
 
 %--------------------------------------------------------------------
 \section{Testing}

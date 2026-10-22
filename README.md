@@ -82,6 +82,7 @@ Main settings: `DATABASE_URL`, `WHISPER_MODEL`, `WHISPER_COMPUTE`, `WHISPER_THRE
 | [Architecture](docs/ARCHITECTURE.md) | Mermaid diagrams: context, components, sequence, state machine, ER, deployment; design trade-offs |
 | [API reference](docs/API.md) | REST endpoints, JSON schemas, WebSocket protocol, client example |
 | [Database](docs/DATABASE.md) | ER diagram, table definition, DDL, ORM model, queries |
+| [Code reference](docs/CODE_REFERENCE.md) | Every module, constant, class, attribute and function: signatures, parameters, returns, key statements; class and call diagrams |
 | [Tech stack](docs/TECH_STACK.md) | Libraries with versions and licenses, model, platform APIs, configuration |
 | [Deployment](docs/DEPLOYMENT.md) | Hugging Face Spaces, Docker Compose, Render/Railway/Fly.io |
 | [PDF documentation](docs/latex/documentation.pdf) | Full LaTeX technical document ([source](docs/latex/documentation.tex)) |

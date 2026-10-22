@@ -12,8 +12,11 @@ _default_unraisable = sys.unraisablehook
 
 
 def _quiet_unraisable(u):
-    # ZeroGPU's `spaces` package discards event loops; their cleanup raises a harmless
-    # "Invalid file descriptor: -1" that would otherwise flood the logs.
+    """Drop the harmless "Invalid file descriptor: -1" errors from discarded event loops.
+
+    ZeroGPU's ``spaces`` package discards event loops whose cleanup raises this error; every
+    other unraisable exception goes to the default hook.
+    """
     if isinstance(u.exc_value, ValueError) and "Invalid file descriptor" in str(u.exc_value):
         return
     _default_unraisable(u)
@@ -34,11 +37,13 @@ try:
 except ImportError:  # running outside Hugging Face
 
     def gpu(fn):
+        """No-op stand-in for ``spaces.GPU`` when running locally."""
         return fn
 
 
 @gpu
-def _placeholder(x: str) -> str:  # never used for real work
+def _placeholder(x: str) -> str:
+    """Identity function that exists only to satisfy ZeroGPU's startup check."""
     return x
 
 

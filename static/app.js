@@ -1,8 +1,12 @@
+/** Shorthand for `document.querySelector`. */
 const $ = (s) => document.querySelector(s);
+/** Base path of the REST API. */
 const api = "/api/transcriptions";
+/** Escape `& < > "` so user text can be inserted into HTML safely. */
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // ---------------------------------------------------------------- history / CRUD
+/** Fetch transcriptions (filtered by the search box) and render the history list. */
 async function load() {
   const q = $("#search").value.trim();
   const res = await fetch(api + (q ? `?q=${encodeURIComponent(q)}` : ""));
@@ -18,7 +22,12 @@ async function load() {
     : '<p class="muted">No transcriptions yet. Record one above!</p>';
 }
 
+/** Row being edited in the dialog, or `null` when creating a new one. */
 let editing = null;
+/**
+ * Open the create/edit dialog.
+ * @param {object|null} row Transcription to edit, or `null` for a new one.
+ */
 function openDialog(row) {
   editing = row;
   $("#dlgTitle").textContent = row ? "Edit transcription" : "New transcription";
@@ -30,6 +39,7 @@ function openDialog(row) {
 }
 $("#new").onclick = () => openDialog(null);
 $("#cancel").onclick = () => $("#dlg").close();
+// Save the dialog: PUT when editing, POST when creating, then reload the list.
 $("#form").onsubmit = async () => {
   const f = $("#form");
   const body = JSON.stringify({ title: f.title.value, language: f.language.value || "auto", text: f.text.value });
@@ -38,6 +48,7 @@ $("#form").onsubmit = async () => {
   });
   load();
 };
+// Event delegation for each row's Edit and Delete buttons.
 $("#list").onclick = async (e) => {
   const btn = e.target.closest("button"); if (!btn) return;
   const id = btn.closest(".item").dataset.id;
@@ -45,9 +56,14 @@ $("#list").onclick = async (e) => {
     if (confirm("Delete this transcription?")) { await fetch(`${api}/${id}`, { method: "DELETE" }); load(); }
   } else openDialog(await (await fetch(`${api}/${id}`)).json());
 };
+// Debounced search: reload 250 ms after the user stops typing.
 let t; $("#search").oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
 
 // ---------------------------------------------------------------- live recording
+/**
+ * AudioWorklet processor source. Runs on the audio thread, converts each 128-sample Float32
+ * block to Int16 PCM and posts the buffer to the main thread (transferred, not copied).
+ */
 const workletSrc = `
 class PCM extends AudioWorkletProcessor {
   process(inputs) {
@@ -62,14 +78,32 @@ class PCM extends AudioWorkletProcessor {
 }
 registerProcessor('pcm', PCM);`;
 
+/*
+ * Recording state:
+ *   ws        WebSocket to /ws/transcribe
+ *   ctx       AudioContext running at 16 kHz
+ *   stream    MediaStream from the microphone
+ *   node      AudioWorkletNode producing PCM
+ *   recording true while capturing audio
+ *   finals    final text segments received this session
+ */
 let ws, ctx, stream, node, recording = false, finals = [];
+/** Show a short status message next to the record button. */
 const setStatus = (s) => ($("#status").textContent = s);
 
+/**
+ * Render the live transcript: final segments in normal text, then the partial one in grey.
+ * @param {string} [partial] Latest provisional text.
+ */
 function renderLive(partial = "") {
   $("#live").innerHTML = (finals.map((f) => esc(f)).join(" ") + (partial ? ` <span class="partial">${esc(partial)}</span>` : "")) ||
     '<span class="muted">Listening… start speaking.</span>';
 }
 
+/**
+ * Start a session: ask for the microphone, open the WebSocket, then start streaming PCM from
+ * an AudioWorklet. Incoming messages update the live view; `saved` refreshes the history.
+ */
 async function start() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
@@ -98,12 +132,14 @@ async function start() {
   setStatus("Recording…");
 }
 
+/** Release the microphone and audio graph. */
 function cleanup() {
   stream?.getTracks().forEach((t) => t.stop());
   node?.disconnect(); ctx?.close();
   stream = node = ctx = null;
 }
 
+/** Stop capturing and send "stop" so the server flushes and saves the transcript. */
 function stop() {
   recording = false;
   $("#rec").textContent = "● Start recording"; $("#rec").classList.remove("rec");

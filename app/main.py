@@ -1,5 +1,5 @@
+"""FastAPI application: REST CRUD for transcriptions and the real-time WebSocket endpoint."""
 import asyncio
-import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,15 +15,16 @@ from sqlalchemy.orm import Session
 from . import stt
 from .db import SessionLocal, Transcription, engine, init_db
 
-STATIC = Path(__file__).resolve().parent.parent / "static"
+STATIC = Path(__file__).resolve().parent.parent / "static"  # index.html, app.js, style.css
 PARTIAL_EVERY_SEC = 1.5      # re-decode the live segment this often
 SILENCE_SEC = 0.8            # trailing silence that closes a segment
-SILENCE_RMS = 0.012
-MAX_SEGMENT_SEC = 25.0
+SILENCE_RMS = 0.012          # RMS energy below which audio counts as silence
+MAX_SEGMENT_SEC = 25.0       # force a final result so re-decoding stays bounded
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Startup: create tables and, unless ``PRELOAD_MODEL=0``, load the Whisper model."""
     init_db()
     if os.getenv("PRELOAD_MODEL", "1") == "1":
         await asyncio.to_thread(stt.get_model)  # warm up so the first request is fast
@@ -34,6 +35,7 @@ app = FastAPI(title="Speech to Text", lifespan=lifespan)
 
 
 def get_db():
+    """FastAPI dependency yielding a database session that is closed after the request."""
     db = SessionLocal()
     try:
         yield db
@@ -42,6 +44,8 @@ def get_db():
 
 
 class TranscriptionIn(BaseModel):
+    """Request body for ``POST /api/transcriptions``. All fields are optional."""
+
     title: str = Field("Untitled", max_length=200)
     text: str = ""
     language: str = "auto"
@@ -49,6 +53,8 @@ class TranscriptionIn(BaseModel):
 
 
 class TranscriptionUpdate(BaseModel):
+    """Request body for ``PUT /api/transcriptions/{id}``. Omitted or null fields are left unchanged."""
+
     title: str | None = Field(None, max_length=200)
     text: str | None = None
     language: str | None = None
@@ -57,6 +63,7 @@ class TranscriptionUpdate(BaseModel):
 # ---------------------------------------------------------------- CRUD API
 @app.get("/api/health")
 def health():
+    """Report liveness, the Whisper model size and the active database dialect."""
     return {"status": "ok", "model": stt.MODEL_SIZE, "database": engine.dialect.name}
 
 
@@ -67,6 +74,7 @@ def list_transcriptions(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
+    """List transcriptions, newest first, optionally filtered by ``q`` in the title or text."""
     stmt = select(Transcription).order_by(Transcription.created_at.desc(), Transcription.id.desc())
     if q:
         like = f"%{q}%"
@@ -77,6 +85,7 @@ def list_transcriptions(
 
 @app.post("/api/transcriptions", status_code=201)
 def create_transcription(body: TranscriptionIn, db: Session = Depends(get_db)):
+    """Insert a transcription and return it with status 201."""
     row = Transcription(**body.model_dump())
     db.add(row)
     db.commit()
@@ -84,6 +93,7 @@ def create_transcription(body: TranscriptionIn, db: Session = Depends(get_db)):
 
 
 def _get_or_404(db: Session, tid: int) -> Transcription:
+    """Load a transcription by id or raise ``HTTPException(404)``."""
     row = db.get(Transcription, tid)
     if not row:
         raise HTTPException(404, "Transcription not found")
@@ -92,11 +102,13 @@ def _get_or_404(db: Session, tid: int) -> Transcription:
 
 @app.get("/api/transcriptions/{tid}")
 def get_transcription(tid: int, db: Session = Depends(get_db)):
+    """Return one transcription, or 404."""
     return _get_or_404(db, tid).to_dict()
 
 
 @app.put("/api/transcriptions/{tid}")
 def update_transcription(tid: int, body: TranscriptionUpdate, db: Session = Depends(get_db)):
+    """Apply the provided fields to a transcription and return it, or 404."""
     row = _get_or_404(db, tid)
     for k, v in body.model_dump(exclude_unset=True).items():
         if v is not None:
@@ -107,6 +119,7 @@ def update_transcription(tid: int, body: TranscriptionUpdate, db: Session = Depe
 
 @app.delete("/api/transcriptions/{tid}", status_code=204)
 def delete_transcription(tid: int, db: Session = Depends(get_db)):
+    """Delete a transcription (204), or 404."""
     db.delete(_get_or_404(db, tid))
     db.commit()
 
@@ -114,19 +127,29 @@ def delete_transcription(tid: int, db: Session = Depends(get_db)):
 # ------------------------------------------------------- real-time WebSocket
 @app.websocket("/ws/transcribe")
 async def ws_transcribe(ws: WebSocket, language: str = "auto"):
-    """Client streams 16 kHz mono Int16 PCM as binary frames.
-    Server replies with JSON: partial | final | saved | error.
-    Send the text frame "stop" to end the session; the transcript is then stored.
+    """Stream audio in, stream transcripts out, then save the session.
+
+    Client sends 16 kHz mono little-endian Int16 PCM as binary frames, and the text frame
+    ``"stop"`` to finish. Server replies with JSON messages of type ``partial``, ``final``,
+    ``saved`` or ``error`` (see docs/API.md).
+
+    Args:
+        ws: The WebSocket connection.
+        language: Query parameter: ``auto`` (detect), ``hi``, ``en`` or another Whisper code.
     """
     await ws.accept()
     sr = stt.SAMPLE_RATE
-    segment = np.zeros(0, dtype=np.float32)
-    since_decode = 0
-    finals: list[str] = []
-    langs: list[str] = []
-    total_samples = 0
+    segment = np.zeros(0, dtype=np.float32)  # audio of the current, not yet final, segment
+    since_decode = 0                         # samples received since the last decode
+    finals: list[str] = []                   # final text of each closed segment
+    langs: list[str] = []                    # detected language of each closed segment
+    total_samples = 0                        # all samples received, for duration_sec
 
     async def decode(final: bool):
+        """Transcribe the current segment in a worker thread and send the result.
+
+        A final decode records the text and clears the segment; a partial one leaves it growing.
+        """
         nonlocal segment, since_decode
         audio = segment.copy()
         since_decode = 0
@@ -156,6 +179,7 @@ async def ws_transcribe(ws: WebSocket, language: str = "auto"):
             total_samples += chunk.size
             since_decode += chunk.size
 
+            # Close the segment after a pause or when it gets too long; otherwise send a partial.
             tail = segment[-int(SILENCE_SEC * sr):]
             silent = segment.size > sr * 1.0 and tail.size >= SILENCE_SEC * sr and float(np.sqrt(np.mean(tail**2))) < SILENCE_RMS
             if silent or segment.size > MAX_SEGMENT_SEC * sr:
@@ -166,6 +190,7 @@ async def ws_transcribe(ws: WebSocket, language: str = "auto"):
         if segment.size:
             await decode(final=True)
 
+        # Session over: store the joined transcript under its most frequent language.
         full_text = " ".join(finals).strip()
         if full_text:
             lang = max(set(langs), key=langs.count) if langs else "auto"
@@ -193,6 +218,7 @@ async def ws_transcribe(ws: WebSocket, language: str = "auto"):
 
 @app.get("/")
 def index():
+    """Serve the single-page UI."""
     return FileResponse(STATIC / "index.html")
 
 
