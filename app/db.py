@@ -6,8 +6,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 DATABASE_URL = (os.getenv("DATABASE_URL") or "sqlite:///./transcriptions.db").strip().strip("'\"")
 # Render/Heroku style URLs
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+for prefix in ("postgres://", "postgresql://"):
+    if DATABASE_URL.startswith(prefix):  # use the psycopg2 driver from requirements.txt
+        DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len(prefix):]
 # Neon adds channel_binding=require, which some libpq builds reject; sslmode=require is enough.
 DATABASE_URL = DATABASE_URL.replace("&channel_binding=require", "").replace("?channel_binding=require&", "?")
 
