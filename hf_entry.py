@@ -5,7 +5,21 @@ owns the server on port 7860 and our FastAPI routes (UI, REST API, WebSocket) ar
 ahead of Gradio's own routes. Transcription itself runs on CPU.
 """
 import os
+import sys
 import threading
+
+_default_unraisable = sys.unraisablehook
+
+
+def _quiet_unraisable(u):
+    # ZeroGPU's `spaces` package discards event loops; their cleanup raises a harmless
+    # "Invalid file descriptor: -1" that would otherwise flood the logs.
+    if isinstance(u.exc_value, ValueError) and "Invalid file descriptor" in str(u.exc_value):
+        return
+    _default_unraisable(u)
+
+
+sys.unraisablehook = _quiet_unraisable
 
 import gradio as gr
 

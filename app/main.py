@@ -13,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from . import stt
-from .db import SessionLocal, Transcription, init_db
+from .db import SessionLocal, Transcription, engine, init_db
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 PARTIAL_EVERY_SEC = 1.5      # re-decode the live segment this often
@@ -57,7 +57,7 @@ class TranscriptionUpdate(BaseModel):
 # ---------------------------------------------------------------- CRUD API
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "model": stt.MODEL_SIZE}
+    return {"status": "ok", "model": stt.MODEL_SIZE, "database": engine.dialect.name}
 
 
 @app.get("/api/transcriptions")
