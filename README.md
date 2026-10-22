@@ -3,8 +3,9 @@ title: Speech to Text
 emoji: 🎙️
 colorFrom: blue
 colorTo: indigo
-sdk: docker
-app_port: 7860
+sdk: gradio
+app_file: hf_entry.py
+python_version: "3.12"
 pinned: false
 ---
 
