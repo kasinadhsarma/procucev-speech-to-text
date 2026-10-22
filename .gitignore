@@ -3,3 +3,7 @@ __pycache__/
 *.db
 server.log
 .pytest_cache/
+docs/latex/*.aux
+docs/latex/*.log
+docs/latex/*.out
+docs/latex/*.toc

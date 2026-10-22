@@ -1,53 +1,193 @@
 # Architecture
 
+Real-time, multilingual (Hindi · English · Hinglish) speech-to-text service with a CRUD dashboard.
+
+- **Live:** https://kasinadhsarma-speech-to-text.hf.space
+- **Related docs:** [API reference](API.md) · [Database schema](DATABASE.md) · [Tech stack](TECH_STACK.md) · [Deployment](DEPLOYMENT.md) · [PDF (LaTeX)](latex/documentation.pdf)
+
+---
+
+## 1. System context
+
+```mermaid
+flowchart LR
+    user([User<br/>speaks Hindi / English])
+    browser[Web browser<br/>Recorder + Dashboard]
+    server[Speech-to-Text service<br/>FastAPI + Whisper]
+    db[(PostgreSQL<br/>Neon)]
+    hub[(Hugging Face Hub<br/>model weights)]
+
+    user -- microphone --> browser
+    browser -- "WebSocket: PCM audio" --> server
+    server -- "partial / final text" --> browser
+    browser -- "REST: CRUD" --> server
+    server -- SQL --> db
+    server -. "first start: download model" .-> hub
 ```
-Browser (mic) ──AudioWorklet──▶ 16 kHz mono Int16 PCM ──WebSocket /ws/transcribe──▶ FastAPI
-                                                                                      │
-                                         rolling buffer + silence detection           │
-                                                                                      ▼
-                                              faster-whisper (open-source Whisper, CPU int8)
-                                                                                      │ partial / final JSON
-Browser live view ◀───────────────────────────────────────────────────────────────────┘
-                                                                                      │ on "stop"
-Dashboard (CRUD) ◀──── REST /api/transcriptions ◀──── SQLAlchemy ◀──── PostgreSQL / SQLite
+
+## 2. Components
+
+```mermaid
+flowchart TB
+    subgraph Client["Browser (static/)"]
+        UI[index.html + style.css]
+        APP[app.js<br/>recorder · live view · CRUD UI]
+        WK[AudioWorklet 'pcm'<br/>Float32 to Int16 at 16 kHz]
+        APP --> WK
+    end
+
+    subgraph Server["Python service (app/)"]
+        MAIN[main.py<br/>FastAPI app]
+        REST[REST router<br/>/api/transcriptions]
+        WS[WebSocket handler<br/>/ws/transcribe]
+        SEG[Segmenter<br/>buffer + silence detection]
+        STT[stt.py<br/>faster-whisper wrapper]
+        DBM[db.py<br/>SQLAlchemy ORM]
+        MAIN --> REST
+        MAIN --> WS
+        WS --> SEG --> STT
+        REST --> DBM
+        WS --> DBM
+    end
+
+    ENTRY[hf_entry.py<br/>Gradio host for HF ZeroGPU]
+    ENTRY -. injects routes .-> MAIN
+
+    WK -- binary frames --> WS
+    APP -- fetch JSON --> REST
+    DBM --> PG[(PostgreSQL / SQLite)]
+    STT --> MODEL[[Whisper small<br/>CTranslate2 int8, CPU]]
 ```
 
-## Real-time pipeline
-1. `getUserMedia` captures the mic; an `AudioContext({sampleRate:16000})` resamples; an inline
-   `AudioWorklet` converts Float32 → Int16 and posts ~128-sample frames.
-2. Frames are streamed over a WebSocket as binary messages.
-3. The server appends to the current *segment* buffer. Every 1.5 s it re-decodes the segment and
-   sends a `partial` message (greyed text in the UI). When ≥0.8 s of trailing silence (RMS < 0.012)
-   is detected, or the segment exceeds 25 s, it sends a `final` message and starts a new segment.
-4. Sending the text frame `stop` flushes the last segment, saves the combined transcript to the
-   DB and replies `{type:"saved", transcription:{…}}`.
+| Module | Responsibility |
+|---|---|
+| `static/app.js` | Microphone capture, WebSocket streaming, live transcript rendering, dashboard CRUD |
+| `app/main.py` | FastAPI app: REST endpoints, WebSocket endpoint, segmentation loop, static hosting |
+| `app/stt.py` | Lazily loads one shared Whisper model; `transcribe(audio, language)` |
+| `app/db.py` | Engine/session setup, `Transcription` ORM model, `DATABASE_URL` normalisation |
+| `hf_entry.py` | Hugging Face entry point: Gradio owns port 7860, FastAPI routes injected first |
 
-## Multilingual (Hindi + English)
-Whisper is natively multilingual. Language is auto-detected per segment (override with the
-dropdown) and an `initial_prompt` containing a Hinglish sentence biases the decoder towards
-code-switched output. Model size is configurable (`WHISPER_MODEL`); `small` is the default
-trade-off between accuracy and CPU latency, `medium`/`large-v3` are noticeably better on Hinglish.
+## 3. Real-time transcription sequence
 
-## Data model
-`transcriptions(id, title, text, language, duration_sec, created_at, updated_at)`
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant B as Browser (app.js)
+    participant W as AudioWorklet
+    participant S as FastAPI /ws/transcribe
+    participant M as Whisper (thread pool)
+    participant D as PostgreSQL
 
-## REST API
-| Method | Path | Description |
+    U->>B: Click "Start recording"
+    B->>B: getUserMedia() + AudioContext(16 kHz)
+    B->>S: WebSocket open ?language=auto
+    loop every audio frame
+        W->>B: Int16 PCM chunk
+        B->>S: binary frame
+        S->>S: append to segment buffer
+        alt 1.5 s of new audio
+            S->>M: transcribe(segment)
+            M-->>S: text, language
+            S-->>B: {"type":"partial","text":...}
+        else 0.8 s silence or segment over 25 s
+            S->>M: transcribe(segment)
+            M-->>S: text, language
+            S-->>B: {"type":"final","text":...}
+            S->>S: reset segment
+        end
+    end
+    U->>B: Click "Stop & save"
+    B->>S: text frame "stop"
+    S->>M: transcribe(remaining audio)
+    S->>D: INSERT transcription
+    D-->>S: row
+    S-->>B: {"type":"saved","transcription":{...}}
+    B->>B: refresh history list
+```
+
+## 4. Segmenter state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Listening
+    Listening --> Listening: audio chunk
+    Listening --> DecodingPartial: 1.5 s new audio
+    DecodingPartial --> Listening: send partial
+    Listening --> DecodingFinal: 0.8 s silence or segment over 25 s
+    DecodingFinal --> Listening: send final, clear buffer
+    Listening --> Flushing: stop or disconnect
+    Flushing --> Saved: INSERT row
+    Saved --> [*]
+```
+
+| Parameter | Value | Where |
 |---|---|---|
-| GET | `/api/transcriptions?q=&limit=&offset=` | List / search (newest first) |
-| POST | `/api/transcriptions` | Create `{title, text, language, duration_sec}` |
-| GET | `/api/transcriptions/{id}` | Read one |
-| PUT | `/api/transcriptions/{id}` | Update `{title?, text?, language?}` |
-| DELETE | `/api/transcriptions/{id}` | Delete (204) |
-| GET | `/api/health` | Liveness |
-| WS | `/ws/transcribe?language=auto\|hi\|en` | Streaming transcription |
+| Sample rate | 16 000 Hz mono, Int16 | `stt.SAMPLE_RATE`, `app.js` |
+| Partial re-decode interval | 1.5 s | `PARTIAL_EVERY_SEC` |
+| Silence window / threshold | 0.8 s / RMS 0.012 | `SILENCE_SEC`, `SILENCE_RMS` |
+| Max segment length | 25 s | `MAX_SEGMENT_SEC` |
+| Decoder | beam 1, VAD filter on, Hinglish `initial_prompt` | `stt.transcribe` |
 
-Interactive docs: `/docs` (Swagger UI).
+## 5. Data model
 
-## Design trade-offs / known limits
-- Whisper isn't a streaming model; re-decoding the live segment gives "partial" results at the cost
-  of repeated compute. Segments are capped at 25 s to bound this.
-- Energy-based silence detection is simple; it can mis-segment in noisy rooms (Whisper's own VAD
-  filter is also on).
-- No auth: every visitor shares one history. Add auth before any public production use.
-- Microphone access requires HTTPS (or localhost).
+```mermaid
+erDiagram
+    TRANSCRIPTIONS {
+        INTEGER id PK "auto-increment"
+        VARCHAR title "max 200, default Untitled"
+        TEXT text "full transcript, UTF-8"
+        VARCHAR language "max 32: auto, hi, en, detected code"
+        FLOAT duration_sec "audio length in seconds"
+        TIMESTAMPTZ created_at "UTC"
+        TIMESTAMPTZ updated_at "UTC, set on update"
+    }
+```
+
+Full DDL, constraints and example rows: [DATABASE.md](DATABASE.md).
+
+## 6. Deployment
+
+```mermaid
+flowchart LR
+    dev[Developer laptop] -- git push --> gh[GitHub repo]
+    dev -- hf upload --> space
+
+    subgraph HF["Hugging Face Space (ZeroGPU, free)"]
+        space[Container: Python 3.12]
+        gradio[Gradio server :7860<br/>SSR off]
+        fast[FastAPI routes<br/>UI, REST, WS]
+        whisper[Whisper small<br/>CPU int8]
+        space --> gradio --> fast --> whisper
+    end
+
+    fast -- TLS, psycopg2 --> neon[(Neon PostgreSQL)]
+    browser[User browser] -- HTTPS / WSS --> gradio
+```
+
+Other targets (Docker Compose with Postgres, Render, Railway, Fly.io) are in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## 7. Multilingual handling
+
+- Whisper is trained on 99 languages, including Hindi, and handles code-switching within one utterance.
+- `language=auto` detects the language per segment; the saved row stores the most frequent one.
+- A Hinglish `initial_prompt` biases decoding toward mixed Hindi/English output.
+- Hindi words come out in Devanagari and English words usually in Latin script. Heavily accented English may be transliterated into Devanagari; larger models (`medium`, `large-v3`) reduce this.
+
+## 8. Design decisions and trade-offs
+
+| Decision | Reason | Trade-off |
+|---|---|---|
+| Self-hosted Whisper (faster-whisper) | Open source, no API keys, strong Hindi support | 1–3 s CPU latency per decode on free hardware |
+| Re-decode the live segment for partials | Whisper is not a streaming model | Repeated compute, bounded by 25 s segments |
+| Energy-based silence detection | Simple, no extra dependency | Can mis-segment in noisy rooms (Whisper VAD also on) |
+| Raw PCM over WebSocket | No codec on either side, low latency | About 32 KB/s upstream |
+| SQLAlchemy + `DATABASE_URL` | Same code on PostgreSQL and SQLite | No migration tool yet (table created on start) |
+| Vanilla JS frontend | No build step, small surface | No component framework |
+
+## 9. Known limitations
+
+- No authentication: every visitor shares one history.
+- No schema migrations (Alembic) yet; `create_all` runs on startup.
+- One shared model instance, so concurrent sessions queue for CPU.
+- Microphone access requires HTTPS or `localhost`.
