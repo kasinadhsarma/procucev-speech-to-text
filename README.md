@@ -11,6 +11,8 @@ pinned: false
 
 # Real-time Speech-to-Text (Hindi · English · Hinglish)
 
+**Live demo:** https://kasinadhsarma-speech-to-text.hf.space
+
 Web app that transcribes speech **live** from the microphone, stores each transcript in a
 relational database and offers a dashboard with full CRUD + search.
 

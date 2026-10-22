@@ -8,7 +8,7 @@ Thank you for reaching out regarding the AI Full Stack Developer opportunity at 
 
 **Assignment 1: Real-time Transcription**
 - GitHub repository: https://github.com/kasinadhsarma/procucev-speech-to-text
-- Deployed application: <DEPLOYED_URL>
+- Deployed application: https://kasinadhsarma-speech-to-text.hf.space
 - Stack: Python/FastAPI, WebSockets, PostgreSQL, self-hosted open-source Whisper (faster-whisper); Hindi/English/Hinglish; live transcription with CRUD history dashboard.
 
 **Responses**

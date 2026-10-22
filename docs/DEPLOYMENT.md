@@ -14,9 +14,20 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn app.main:app --reload
 ```
 
-## Hugging Face Spaces (Docker SDK) – free CPU, HTTPS included
-1. Create a Space → SDK **Docker**; push this repo (port 7860: set `PORT=7860` in Space variables).
-2. Create a free Postgres at neon.tech / supabase.com and add `DATABASE_URL` as a Space secret.
+## Hugging Face Spaces (live deployment) – free, HTTPS included
+Live: https://kasinadhsarma-speech-to-text.hf.space
+
+Free accounts only get **ZeroGPU** hardware for Gradio-SDK Spaces (Docker and CPU basic need PRO),
+and ZeroGPU refuses to start unless Gradio launches an app with an `@spaces.GPU` function.
+`hf_entry.py` handles this: Gradio owns port 7860 with a hidden placeholder GPU function, and
+the FastAPI routes (UI, REST, WebSocket) are injected ahead of Gradio's own (`app_kwargs.routes`).
+SSR is disabled (`ssr_mode=False`) because its Node proxy would otherwise hide those routes.
+Transcription itself runs on CPU.
+
+1. Create a Space: SDK **Gradio**, template Blank.
+2. Upload: `hf upload <user>/<space> . . --repo-type=space --exclude ".git/*" --exclude ".venv/*"`
+3. Space secret `DATABASE_URL` = Neon connection string (without `channel_binding=require`).
+   Without it the app falls back to SQLite inside the container, which resets on restart.
 
 ## Render / Railway / Fly.io
 - Deploy the Dockerfile as a Web Service (≥1 GB RAM). Add a managed Postgres and set

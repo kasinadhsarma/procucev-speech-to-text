@@ -2,9 +2,9 @@
 Usage: python tests/stream_demo.py file.pcm [language]"""
 import asyncio, json, sys, websockets
 
-async def main(path, lang="auto"):
+async def main(path, lang="auto", base="ws://localhost:8000"):
     pcm = open(path, "rb").read() + b"\x00" * 32000 * 2  # 2 s trailing silence
-    async with websockets.connect(f"ws://localhost:8000/ws/transcribe?language={lang}") as ws:
+    async with websockets.connect(f"{base}/ws/transcribe?language={lang}") as ws:
         async def recv():
             async for m in ws:
                 print(json.loads(m))
