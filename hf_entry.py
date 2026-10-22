@@ -1,30 +1,43 @@
-"""Entry point for Hugging Face Spaces (Gradio SDK): serves the FastAPI app on port 7860.
+"""Entry point for Hugging Face Spaces (Gradio SDK).
 
-ZeroGPU Spaces refuse to start unless a Gradio app with an @spaces.GPU function exists,
-so a tiny placeholder Gradio page is mounted at /gradio. Transcription itself runs on CPU.
+ZeroGPU Spaces insist on launching a Gradio app that contains an @spaces.GPU function, so Gradio
+owns the server on port 7860 and our FastAPI routes (UI, REST API, WebSocket) are injected into it
+ahead of Gradio's own routes. Transcription itself runs on CPU.
 """
 import os
+import threading
 
-import uvicorn
+import gradio as gr
 
-from app.main import app
+from app import stt
+from app.db import init_db
+from app.main import app as stt_app
 
 try:
-    import gradio as gr
     import spaces
 
-    @spaces.GPU
-    def _placeholder(x: str) -> str:  # never used for real work
-        return x
-
-    with gr.Blocks() as demo:
-        gr.Markdown("The speech-to-text app is served at the site root: [open it](/).")
-        t = gr.Textbox(visible=False)
-        t.change(_placeholder, t, t)
-
-    app = gr.mount_gradio_app(app, demo, path="/gradio")
+    gpu = spaces.GPU
 except ImportError:  # running outside Hugging Face
-    pass
+
+    def gpu(fn):
+        return fn
+
+
+@gpu
+def _placeholder(x: str) -> str:  # never used for real work
+    return x
+
+
+with gr.Blocks() as demo:
+    gr.Markdown("The speech-to-text app is served at the site root.")
+    box = gr.Textbox(visible=False)
+    box.change(_placeholder, box, box)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "7860")))
+    init_db()
+    threading.Thread(target=stt.get_model, daemon=True).start()  # warm the model
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", "7860")),
+        app_kwargs={"routes": list(stt_app.routes)},
+    )
