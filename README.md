@@ -1,3 +1,13 @@
+---
+title: Speech to Text
+emoji: 🎙️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Real-time Speech-to-Text (Hindi · English · Hinglish)
 
 Web app that transcribes speech **live** from the microphone, stores each transcript in a
