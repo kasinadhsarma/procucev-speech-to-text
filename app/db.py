@@ -4,10 +4,12 @@ from datetime import datetime, timezone
 from sqlalchemy import DateTime, Float, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./transcriptions.db")
+DATABASE_URL = (os.getenv("DATABASE_URL") or "sqlite:///./transcriptions.db").strip().strip("'\"")
 # Render/Heroku style URLs
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Neon adds channel_binding=require, which some libpq builds reject; sslmode=require is enough.
+DATABASE_URL = DATABASE_URL.replace("&channel_binding=require", "").replace("?channel_binding=require&", "?")
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
