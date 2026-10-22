@@ -1,0 +1,13 @@
+services:
+  db:
+    image: postgres:16
+    environment: { POSTGRES_USER: stt, POSTGRES_PASSWORD: stt, POSTGRES_DB: stt }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U stt"], interval: 5s, retries: 10 }
+  web:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: postgresql://stt:stt@db:5432/stt
+    depends_on: { db: { condition: service_healthy } }
+volumes: { pgdata: {} }

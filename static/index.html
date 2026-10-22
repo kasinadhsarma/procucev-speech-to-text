@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speech to Text</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header><h1>🎙️ Speech to Text <small>Hindi · English · Hinglish</small></h1></header>
+<main>
+  <section class="card">
+    <h2>Live transcription</h2>
+    <div class="row">
+      <select id="lang" title="Language">
+        <option value="auto">Auto-detect (Hindi + English)</option>
+        <option value="hi">Hindi</option>
+        <option value="en">English</option>
+      </select>
+      <button id="rec" class="primary">● Start recording</button>
+      <span id="status" class="muted">Idle</span>
+    </div>
+    <div id="live" class="live" aria-live="polite"><span class="muted">Your words will appear here as you speak…</span></div>
+  </section>
+
+  <section class="card">
+    <div class="row between">
+      <h2>History</h2>
+      <div class="row">
+        <input id="search" type="search" placeholder="Search…">
+        <button id="new">+ New</button>
+      </div>
+    </div>
+    <div id="list"></div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <form method="dialog" id="form">
+    <h3 id="dlgTitle">Edit</h3>
+    <label>Title <input name="title" maxlength="200" required></label>
+    <label>Language <input name="language" placeholder="auto / hi / en"></label>
+    <label>Text <textarea name="text" rows="8"></textarea></label>
+    <div class="row end">
+      <button type="button" id="cancel">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+<script src="/static/app.js"></script>
+</body>
+</html>
