@@ -39,5 +39,6 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
+        ssr_mode=False,  # SSR puts a Node proxy in front that hides our routes
         app_kwargs={"routes": list(stt_app.routes)},
     )
